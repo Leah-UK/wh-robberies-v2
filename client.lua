@@ -1,270 +1,216 @@
-local robbing = false
-local robbinglocation = nil
-local camera = nil
-local robbinglocation2 = nil
-ESX = nil
+_onSpot = false
+isMinigame = false
+_SafeCrackingStates = 'Setup'
+firstFail = false
 
-Citizen.CreateThread(function()
-	while ESX == nil do
-		TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
-		Citizen.Wait(0)
+function createSafe(combination)
+	local res
+	isMinigame = not isMinigame
+	RequestStreamedTextureDict('MPSafeCracking', false)
+	RequestAmbientAudioBank('SAFE_CRACK', false)
+	
+	if (isMinigame) then
+		InitializeSafe(combination)
+		firstFail = false
+		while (isMinigame) do
+			playFx('mini@safe_cracking', 'idle_base')
+			DrawSprites(true)
+			res = RunMiniGame()
+
+			if (res == true or res == false) then
+				return res
+			end
+
+			Citizen.Wait(5)
+		end
 	end
-end)
+end
+exports('createSafe', createSafe)
 
-function InCashRegZone(coords)
-    Location = Config.CashRegLocations
-    for i = 1, #Location, 1 do
-        if GetDistanceBetweenCoords(coords, Location[i].coords.x, Location[i].coords.y, Location[i].coords.z, true) < 1.5 then
-        	robbinglocation = Location[i].name
-        	if Config.Cameras then
-        		camera = Location[i].cam
-        	end
-            return true
-        end
-    end
-    return false
+function InitializeSafe(safeCombination)
+	_initDialRotationDirection = 'Clockwise'
+	_safeCombination = safeCombination
+
+	RelockSafe()
+	SetSafeDialStartNumber()
 end
 
-function InSafeZone(coords)
-    Location = Config.SafeLocations
-    for i = 1, #Location, 1 do
-        if GetDistanceBetweenCoords(coords, Location[i].coords.x, Location[i].coords.y, Location[i].coords.z, true) < 1.5 then
-        	robbinglocation = Location[i].name
-        	if Config.Cameras then
-        		camera = Location[i].cam
-        	end
-            return true
-        end
-    end
-    return false
+function DrawSprites(drawLocks)
+	local textureDict = 'MPSafeCracking'
+	local _aspectRatio = GetAspectRatio(true)
+
+	DrawSprite(textureDict, 'Dial_BG', 0.48, 0.3, 0.3, _aspectRatio * 0.3, 0, 255, 255, 255, 255)
+	DrawSprite(textureDict, 'Dial', 0.48, 0.3, 0.3 * 0.5, _aspectRatio * 0.3 * 0.5, SafeDialRotation, 255, 255, 255, 255)
+
+	if (not drawLocks) then
+		return
+	end
+
+	local xPos = 0.6
+	local yPos = (0.3 * 0.5) + 0.035
+	for _, lockActive in pairs(_safeLockStatus) do
+		local lockString
+		if lockActive then
+			lockString = 'lock_closed'
+		else
+			lockString = 'lock_open'
+		end
+
+		DrawSprite(textureDict, lockString, xPos, yPos, 0.025, _aspectRatio * 0.015, 0, 231, 194, 81, 255)
+		yPos = yPos + 0.05
+	end
 end
 
-function InVaultZone(coords)
-    Location = Config.VaultLocations
-    for i = 1, #Location, 1 do
-        if GetDistanceBetweenCoords(coords, Location[i].coords.x, Location[i].coords.y, Location[i].coords.z, true) < 1.5 then
-        	robbinglocation = Location[i].name
-        	if Config.Cameras then
-        		camera = Location[i].cam
-        	end
-            return true
-        end
-    end
-    return false
+function RunMiniGame()
+	if (_SafeCrackingStates == 'Setup') then
+		_SafeCrackingStates = 'Cracking'
+	elseif (_SafeCrackingStates == 'Cracking') then
+		local isDead = GetEntityHealth(PlayerPedId()) <= 101
+		if (isDead) then
+			EndMiniGame(false)
+			return false
+		end
+
+		if (IsControlJustPressed(0, 33)) then
+			EndMiniGame(false)
+			return false
+		end
+
+		if (IsControlJustPressed(0, 32)) then
+			if _onSpot then
+				ReleaseCurrentPin()
+				_onSpot = false
+				if IsSafeUnlocked() then
+					EndMiniGame(true, false)
+					return true
+				end
+			elseif (not firstFail) then
+				firstFail = true
+				exports['bixbi_core']:Notify('error', 'Wrong combination. Last chance.')
+			else
+				EndMiniGame(false)
+				return false
+			end
+		end
+
+		if (IsControlJustPressed(0, 34)) then
+			RotateSafeDial('Anticlockwise')
+			CheckCombo()
+		elseif (IsControlJustPressed(0, 35)) then
+			RotateSafeDial('Clockwise')
+			CheckCombo()
+		end
+	end
 end
 
-RegisterNetEvent('wh-robberies:drawblip')
-AddEventHandler('wh-robberies:drawblip', function(coords)
-	blip = AddBlipForCoord(coords.x, coords.y, coords.z)
-	SetBlipSprite(blip, 161)
-	SetBlipScale(blip, 2.0)
-	SetBlipColour(blip, 3)
-	PulseBlip(blip)
-end)
-
-RegisterNetEvent('wh-robberies:removeblip')
-AddEventHandler('wh-robberies:removeblip', function()
-	RemoveBlip(blip)
-end)
-
-Citizen.CreateThread(function()
-    while true do
-        Citizen.Wait(0)
-		if not Config.EnableItemTrigger then
-			player = GetPlayerPed(-1)
-			coords = GetEntityCoords(player)
-
-			-- Cash Registers
-			if Config.EnableCashReg then
-				if InCashRegZone(coords) then
-					if IsControlJustReleased(0, Config.Control) and IsInputDisabled(0) then
-						--print("Pressed")
-						TriggerServerEvent('wh-robberies:cops', "cashreg", robbinglocation2)
-					end
-				end
-			end
-
-			-- Safes
-			if Config.EnableSafe then
-				if InSafeZone(coords) then
-					if IsControlJustReleased(0, Config.Control) and IsInputDisabled(0) then
-						TriggerServerEvent('wh-robberies:cops', "safe", robbinglocation2)
-					end
-				end
-			end
-
-			-- Vaults
-			if Config.EnableVault then
-				if InVaultZone(coords) then
-					if IsControlJustReleased(0, Config.Control) and IsInputDisabled(0) then
-						TriggerServerEvent('wh-robberies:cops', "vault", robbinglocation2)
-					end
-				end
-			end
-		end
-	end
-end)
-
-Citizen.CreateThread(function()
-    while true do
-        Citizen.Wait(0)
-        player = GetPlayerPed(-1)
-        coords = GetEntityCoords(player)
-
-        if Config.EnableCashReg then
-	        for k, v in pairs(Config.CashRegLocations) do
-	            if GetDistanceBetweenCoords(coords, Config.CashRegLocations[k].coords.x, Config.CashRegLocations[k].coords.y, Config.CashRegLocations[k].coords.z, true) < 1.5  then
-	                if not Config.EnableItemTrigger then
-						ESX.Game.Utils.DrawText3D(vector3(Config.CashRegLocations[k].coords.x, Config.CashRegLocations[k].coords.y, Config.CashRegLocations[k].coords.z + 1.0), "Press ~r~[Z]~s~ to Rob Cash Register", 0.6)
-					end
-					robbinglocation2 = k
-	            end
-	        end
-	    end
-
-	    if Config.EnableSafe then
-	        for k, v in pairs(Config.SafeLocations) do
-	            if GetDistanceBetweenCoords(coords, Config.SafeLocations[k].coords.x, Config.SafeLocations[k].coords.y, Config.SafeLocations[k].coords.z, true) < 1.5 then
-					if not Config.EnableItemTrigger then
-						ESX.Game.Utils.DrawText3D(vector3(Config.SafeLocations[k].coords.x, Config.SafeLocations[k].coords.y, Config.SafeLocations[k].coords.z + 1.0), "Press ~r~[Z]~s~ to Rob Safe", 0.6)
-	                end
-					robbinglocation2 = k
-	            end
-	        end
-	    end
-
-	    if Config.EnableVault then
-	        for k, v in pairs(Config.VaultLocations) do
-	            if GetDistanceBetweenCoords(coords, Config.VaultLocations[k].coords.x, Config.VaultLocations[k].coords.y, Config.VaultLocations[k].coords.z, true) < 1.5 then
-	                if not Config.EnableItemTrigger then
-						ESX.Game.Utils.DrawText3D(vector3(Config.VaultLocations[k].coords.x, Config.VaultLocations[k].coords.y, Config.VaultLocations[k].coords.z + 1.0), "Press ~r~[Z]~s~ to Rob the Vault", 0.6)
-					end
-					robbinglocation2 = k
-	            end
-	        end
-	    end
-	end
-end)
-
-RegisterNetEvent('wh-robberies:cashregrob')
-AddEventHandler('wh-robberies:cashregrob', function()
-	player = GetPlayerPed(-1)
-    coords = GetEntityCoords(player)
-	if Config.NotifyPolice then
-		if Config.Cameras then
-			TriggerServerEvent('esx_outlawalert:cameraTriggered', camera, robbinglocation)
-		else
-			TriggerServerEvent('esx_outlawalert:storeRobbery', robbinglocation)
-		end
-		TriggerServerEvent('wh-robberies:notify', 1, robbinglocation2)
-	end
-	exports['mythic_notify']:DoCustomHudText('inform', 'A and D to move. W to accept, S to cancel', 7000)
-	--Citizen.Wait(200)
-	local res = exports['wh-robberies-v2']:createSafe({math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99)})
-	if res == true then
-		local player = GetPlayerFromServerId(source)
-		TriggerServerEvent('wh-robberies:notify', 2)
-		TriggerServerEvent('wh-robberies:ReceiveMonies', res)
-
-		if Config.EnableCooldown then
-			TriggerServerEvent('wh-robberies:completed', robbinglocation2)
-		end
+function CheckCombo()
+	local currentDialNumber = GetCurrentSafeDialNumber(SafeDialRotation)
+	if (currentDialNumber ~= _safeCombination[_currentLockNum]) then
+		PlaySoundFrontend(0, 'TUMBLER_TURN', 'SAFE_CRACK_SOUNDSET', true)
 	else
-		exports['mythic_notify']:DoHudText('error', 'Cracking Failed')
-		TriggerServerEvent('wh-robberies:notify', 2)
-		if Config.EnableItemTrigger then
-			TriggerServerEvent('wh-robberies:fail')
-		end
+		PlaySoundFrontend(0, 'TUMBLER_PIN_FALL', 'SAFE_CRACK_SOUNDSET', true)
 	end
-end)
 
-
-RegisterNetEvent('wh-robberies:saferob')
-AddEventHandler('wh-robberies:saferob', function()
-	if Config.NotifyPolice then
-		if Config.Cameras then
-			TriggerServerEvent('esx_outlawalert:cameraTriggered', camera, robbinglocation)
-		else
-			TriggerServerEvent('esx_outlawalert:storeRobbery', robbinglocation)
-		end
-		TriggerServerEvent('wh-robberies:notify', 1, robbinglocation2)
+	local pinUnlocked = _safeLockStatus[_currentLockNum] and currentDialNumber == _safeCombination[_currentLockNum]
+	if pinUnlocked then
+		PlaySoundFrontend(0, 'TUMBLER_PIN_FALL', 'SAFE_CRACK_SOUNDSET', true)
+		_onSpot = true
 	end
-	exports['mythic_notify']:DoCustomHudText('inform', 'A and D to move. W to accept, S to cancel', 7000)
-	--Citizen.Wait(200)
-	local res = exports['wh-robberies-v2']:createSafe({math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99)})
-	if res == true then
-		TriggerServerEvent('wh-robberies:notify', 2)
-		local player = GetPlayerFromServerId(source)
-		TriggerServerEvent('wh-robberies:ReceiveMonies', res)
+end
 
-		if Config.EnableCooldown then
-			TriggerServerEvent('wh-robberies:completed', robbinglocation2)
+function RotateSafeDial(rotationDirection)
+	if (rotationDirection == 'Anticlockwise' or rotationDirection == 'Clockwise') then
+		local multiplier
+		local rotationPerNumber = 3.6
+		if (rotationDirection == 'Anticlockwise') then
+			multiplier = 1
+		elseif (rotationDirection == 'Clockwise') then
+			multiplier = -1
 		end
+
+		local rotationChange = multiplier * rotationPerNumber
+		SafeDialRotation = SafeDialRotation + rotationChange
+	end
+
+	_currentDialRotationDirection = rotationDirection
+	_lastDialRotationDirection = rotationDirection
+end
+
+function SetSafeDialStartNumber()
+	local dialStartNumber = math.random(0, 100)
+	SafeDialRotation = 3.6 * dialStartNumber
+end
+
+function RelockSafe()
+	if (not _safeCombination) then
+		return
+	end
+
+	_safeLockStatus = InitSafeLocks()
+	_currentLockNum = 1
+	_requiredDialRotationDirection = _initDialRotationDirection
+	_onSpot = false
+
+	for i = 1, #_safeCombination do
+		_safeLockStatus[i] = true
+	end
+end
+
+function InitSafeLocks()
+	if (not _safeCombination) then
+		return
+	end
+
+	local locks = {}
+	for i = 1, #_safeCombination do
+		table.insert(locks, true)
+	end
+
+	return locks
+end
+
+function GetCurrentSafeDialNumber(currentDialAngle)
+	local number = math.floor(100 * (currentDialAngle / 360))
+	if (number > 0) then
+		number = 100 - number
+	end
+
+	return math.abs(number)
+end
+
+function ReleaseCurrentPin()
+	_safeLockStatus[_currentLockNum] = false
+	_currentLockNum = _currentLockNum + 1
+
+	if (_requiredDialRotationDirection == 'Anticlockwise') then
+		_requiredDialRotationDirection = 'Clockwise'
 	else
-		exports['mythic_notify']:DoHudText('error', 'Cracking Failed')
-		TriggerServerEvent('wh-robberies:notify', 2)
-		if Config.EnableItemTrigger then
-			TriggerServerEvent('wh-robberies:fail')
-		end
+		_requiredDialRotationDirection = 'Anticlockwise'
 	end
-end)
 
-RegisterNetEvent('wh-robberies:vaultrob')
-AddEventHandler('wh-robberies:vaultrob', function()
-	if Config.NotifyPolice then
-		if Config.Cameras then
-			TriggerServerEvent('esx_outlawalert:cameraTriggered', camera, robbinglocation)
-		else
-			TriggerServerEvent('esx_outlawalert:storeRobbery', robbinglocation)
-		end
-		TriggerServerEvent('wh-robberies:notify', 1, robbinglocation2)
-	end
-	exports['mythic_notify']:DoCustomHudText('inform', 'A and D to move. W to accept, S to cancel', 7000)
-	--Citizen.Wait(200)
-	local res = exports['wh-robberies-v2']:createSafe({math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99),math.random(0,99)})
-	if res == true then
-		TriggerServerEvent('wh-robberies:notify', 2)
-		local player = GetPlayerFromServerId(source)
-		TriggerServerEvent('wh-robberies:ReceiveMonies', res)
+	PlaySoundFrontend(0, 'TUMBLER_PIN_FALL_FINAL', 'SAFE_CRACK_SOUNDSET', true)
+end
 
-		if Config.EnableCooldown then
-			TriggerServerEvent('wh-robberies:completed', robbinglocation2)
-		end
+function IsSafeUnlocked()
+	return _safeLockStatus[_currentLockNum] == nil
+end
+
+function EndMiniGame(safeUnlocked)
+	if (safeUnlocked) then
+		PlaySoundFrontend(0, 'SAFE_DOOR_OPEN', 'SAFE_CRACK_SOUNDSET', true)
 	else
-		exports['mythic_notify']:DoHudText('error', 'Cracking Failed')
-		TriggerServerEvent('wh-robberies:notify', 2)
-		if Config.EnableItemTrigger then
-			TriggerServerEvent('wh-robberies:fail')
-		end
+		PlaySoundFrontend(0, 'SAFE_DOOR_CLOSE', 'SAFE_CRACK_SOUNDSET', true)
 	end
-end)
+	isMinigame = false
+	SafeCrackingStates = 'Setup'
+	ClearPedTasksImmediately(PlayerPedId())
+end
 
-if Config.EnableItemTrigger then
-	RegisterNetEvent('wh-robberies:itemused')
-	AddEventHandler('wh-robberies:itemused', function()
-		print("here")
-		player = GetPlayerPed(-1)
-		coords = GetEntityCoords(player)
+function playFx(dict, anim)
+	RequestAnimDict(dict)
+	while not HasAnimDictLoaded(dict) do
+		Wait(10)
+	end
 
-		-- Cash Registers
-		if Config.EnableCashReg then
-			if InCashRegZone(coords) then
-				TriggerServerEvent('wh-robberies:cops', "cashreg", robbinglocation2)
-			end
-		end
-
-		-- Safes
-		if Config.EnableSafe then
-			if InSafeZone(coords) then
-				TriggerServerEvent('wh-robberies:cops', "safe", robbinglocation2)
-			end
-		end
-
-		-- Vaults
-		if Config.EnableVault then
-			if InVaultZone(coords) then
-				TriggerServerEvent('wh-robberies:cops', "vault", robbinglocation2)
-			end
-		end
-	end)
+	TaskPlayAnim(PlayerPedId(), dict, anim, 3.0, 3.0, -1, 1, 0, 0, 0, 0)
 end
