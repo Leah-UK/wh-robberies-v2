@@ -6,10 +6,5 @@ description 'ESX Safe Cracking Store Robbery'
 version '2.0'
 
 client_scripts {
-	'config.lua',
 	'client.lua'
-}
-
-server_scripts {
-	'config.lua'
 }
